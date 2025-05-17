@@ -1,0 +1,90 @@
+# Deep Research API Testing Instructions
+
+## Directory Structure
+Make sure you're in the correct directory:
+/Users/wesleylu/Desktop/mcp-deepresearch/deepresearch
+
+## Install Required Dependencies
+Before running the tests, you need to install the required dependencies:
+
+```
+# Install dependencies listed in pyproject.toml
+pip install -e .
+
+# Or install dependencies manually
+pip install arxiv biopython semanticscholar scholarly PyPDF2 google-api-python-client google-auth-oauthlib beautifulsoup4 aiohttp pydantic crossrefapi
+```
+
+## Test Commands
+
+### 1. ArXiv Connector
+```
+python src/deepresearch/tests/test_connectors_download.py --connector arxiv
+```
+Tests: search, metadata retrieval, PDF download, ID parsing
+
+### 2. PubMed Connector
+```
+python src/deepresearch/tests/test_connectors_download.py --connector pubmed
+```
+Tests: search, metadata retrieval, PDF download (where available), ID parsing
+
+### 3. Semantic Scholar Connector
+```
+# Optional: Set API key for better results
+export SEMANTICSCHOLAR_API_KEY=your_api_key
+
+python src/deepresearch/tests/test_connectors_download.py --connector semanticscholar
+```
+Tests: search, metadata retrieval, PDF download (where available), citation data, ID parsing
+
+Note: There might be rate-limiting issues with the Semantic Scholar API.
+
+### 4. Google Scholar Connector (Fixed)
+```
+python src/deepresearch/tests/test_google_scholar_fix.py --mode search
+```
+Tests: search functionality with our updated script that handles author data properly
+
+For metadata and PDF retrieval through Google Scholar results:
+- The test automatically detects ArXiv papers returned in search results
+- Extracts the ArXiv ID and retrieves full metadata and PDFs via ArXiv connector
+- This works around Google Scholar's limitations for direct PDF access
+
+### 5. Google Drive Connector
+```
+# Required: Set up OAuth credentials first
+export GOOGLE_CLIENT_ID=your_client_id
+export GOOGLE_CLIENT_SECRET=your_client_secret
+
+python src/deepresearch/tests/test_connectors_download.py --connector drive
+```
+Tests: file upload, file download, listing files, folder creation
+
+## Advanced Testing
+
+### Testing All Connectors
+To test all working connectors in one go:
+```
+python src/deepresearch/tests/test_connectors_download.py
+```
+
+### Debugging Issues
+For connector-specific troubleshooting:
+```
+# Google Scholar advanced debugging
+python src/deepresearch/tests/test_google_scholar_fix.py --mode methods
+
+# Direct scholarly module test
+python src/deepresearch/tests/test_google_scholar_fix.py --mode scholarly
+```
+
+## Downloaded Files
+All downloaded PDFs will be saved to the `downloads/` directory in the project root.
+
+## Notes on Google Scholar and Semantic Scholar
+- Google Scholar doesn't have an official API and uses web scraping via the scholarly library
+- The connector now properly handles both string and list author data formats
+- For PDF downloads, it's best to identify papers that are also available on ArXiv or other direct sources
+- Semantic Scholar has rate limits that may affect API usage
+- For production use, consider implementing a caching layer and proper rate-limiting mechanisms 

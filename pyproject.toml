@@ -1,0 +1,30 @@
+[project]
+name = "deepresearch"
+version = "0.1.0"
+description = "This is a MCP server for researching on PubMed, Google Scholar, and arXiv. It will read/update your Google Drive for context."
+readme = "README.md"
+authors = [
+    { name = "wlu314", email = "125327127+wlu314@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.9.0",
+    "arxiv>=1.4.8",
+    "biopython>=1.83",  # For PubMed/NCBI E-utilities
+    "semanticscholar>=0.7.0",  # For Semantic Scholar API
+    "scholarly>=1.7.11",  # For Google Scholar
+    "PyPDF2>=3.0.0",  # For PDF processing
+    "google-api-python-client>=2.114.0",  # For Google Drive API
+    "google-auth-oauthlib>=1.2.0",  # For Google OAuth
+    "beautifulsoup4>=4.12.2",  # For HTML parsing
+    "aiohttp>=3.9.3",  # For async HTTP requests
+    "pydantic>=2.6.0",  # For data modeling
+    "crossrefapi>=1.5.0",  # For citation data
+]
+
+[project.scripts]
+deepresearch = "deepresearch:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
