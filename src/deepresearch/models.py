@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any, Union
+from typing import List, Dict, Optional, Any, Union, Tuple
 from pydantic import BaseModel, Field, AnyUrl
 from datetime import datetime
 
@@ -60,4 +60,28 @@ class SearchResult(BaseModel):
     papers: List[Paper]
     total_found: int
     thematic_summary: Optional[str] = None
-    suggested_queries: Optional[List[str]] = None 
+    suggested_queries: Optional[List[str]] = None
+
+class Relation(BaseModel):
+    paper_id: str
+    source: str
+    relation: str
+    target: str
+    section: Optional[str] = None
+    evidence: Optional[str] = None
+
+class PaperComparison(BaseModel):
+    paper_ids: List[str]
+    research_questions: Dict[str, Any]
+    methodologies: Dict[str, Any]
+    findings: Dict[str, Any]
+    limitations: Dict[str, Any]
+    future_directions: Dict[str, Any]
+
+class PublicationTrend(BaseModel):
+    query: str
+    year_counts: Dict[int, int]  # Publication count by year
+    emerging_topics: List[str]   # List of emerging topics/terms
+    frequent_authors: List[Tuple[str, int]]  # Author name and count
+    term_frequencies: Dict[str, int]  # Term frequency counts
+    source_distribution: Dict[str, int]  # Count by source 

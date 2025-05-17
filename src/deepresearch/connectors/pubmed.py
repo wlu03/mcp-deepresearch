@@ -270,4 +270,4 @@ class PubMedConnector(BaseConnector):
         if external_id.isdigit():
             return f"pubmed:{external_id}"
 
-        return external_id  # Return unmodified if unrecognized format
+        return external_id

@@ -1,25 +1,48 @@
 from typing import Dict, Any, Optional, List, Union, Tuple
 import asyncio
-import logging
 import json
+import os
+import re
 from datetime import datetime
+from dotenv import load_dotenv
+import aiohttp
 
-from .models import Paper, PaperSummary, SearchQuery, SearchResult, Annotation, CitationGraph
+from .models import (
+    Paper,
+    PaperSummary,
+    SearchQuery,
+    SearchResult,
+    Annotation,
+    CitationGraph,
+    Relation,
+    PaperComparison,
+    PublicationTrend
+)
+
 from .connectors import (
-    ArXivConnector, 
-    PubMedConnector, 
-    SemanticScholarConnector, 
-    GoogleScholarConnector, 
+    ArXivConnector,
+    PubMedConnector,
+    SemanticScholarConnector,
+    GoogleScholarConnector,
     GoogleDriveConnector
 )
+
 from .pipelines import (
-    MetadataExtractor, 
-    FullTextFetcher, 
-    Summarizer, 
-    CitationGraphBuilder
+    MetadataExtractor,
+    FullTextFetcher,
+    Summarizer,
+    CitationGraphBuilder,
+    RelationExtractor,
+    PaperComparator,
+    TrendAnalyzer
 )
 
-logger = logging.getLogger(__name__)
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 class DeepResearchOrchestrator:
     """
@@ -36,6 +59,14 @@ class DeepResearchOrchestrator:
             config: Configuration dictionary with API keys, settings, etc.
         """
         self.config = config or {}
+        
+        # Load API keys from environment variables if not provided in config
+        if "llm_api_key" not in self.config:
+            self.config["llm_api_key"] = os.environ.get("LLM_API_KEY")
+            
+        if "semanticscholar_api_key" not in self.config:
+            self.config["semanticscholar_api_key"] = os.environ.get("SEMANTICSCHOLAR_API_KEY")
+            
         self._session = None
         self._connectors = {}
         self._pipelines = {}
@@ -47,7 +78,6 @@ class DeepResearchOrchestrator:
             return
             
         # Create shared aiohttp session
-        import aiohttp
         self._session = aiohttp.ClientSession()
         
         # Initialize connectors
@@ -75,7 +105,14 @@ class DeepResearchOrchestrator:
             "summarizer": Summarizer(
                 llm_api_key=self.config.get("llm_api_key")
             ),
-            "citation_graph_builder": CitationGraphBuilder(self._connectors)
+            "citation_graph_builder": CitationGraphBuilder(self._connectors),
+            "relation_extractor": RelationExtractor(
+                llm_api_key=self.config.get("llm_api_key")
+            ),
+            "paper_comparator": PaperComparator(
+                llm_api_key=self.config.get("llm_api_key")
+            ),
+            "trend_analyzer": TrendAnalyzer()
         }
         
         self._initialized = True
@@ -130,7 +167,7 @@ class DeepResearchOrchestrator:
                 papers = await task
                 all_papers.extend(papers)
             except Exception as e:
-                logger.error(f"Error searching {source}: {str(e)}")
+                print(f"Error searching {source}: {str(e)}")
                 
         # Sort results based on sort criteria
         if search_query.sort_by == "date":
@@ -226,7 +263,7 @@ class DeepResearchOrchestrator:
             try:
                 paper = await self.fetch_paper_metadata(paper_id)
             except Exception as e:
-                logger.warning(f"Error fetching paper metadata for summary: {e}")
+                print(f"Error fetching paper metadata for summary: {e}")
                 
         # If we don't have paper metadata, create minimal Paper object
         if not paper:
@@ -265,7 +302,7 @@ class DeepResearchOrchestrator:
             try:
                 paper = await self.fetch_paper_metadata(paper_id)
             except Exception as e:
-                logger.warning(f"Error fetching paper metadata for annotation: {e}")
+                print(f"Error fetching paper metadata for annotation: {e}")
                 
         # If we don't have paper metadata, create minimal Paper object
         if not paper:
@@ -287,13 +324,15 @@ class DeepResearchOrchestrator:
             keywords=annotations_dict["keywords"]
         )
         
-    async def get_citation_graph(self, paper_ids: List[str], depth: int = 1) -> CitationGraph:
+    async def get_citation_graph(self, paper_ids: List[str], depth: int = 1, max_citations: int = 20, direction: str = "both") -> CitationGraph:
         """
         Build a citation graph for one or more papers.
         
         Args:
             paper_ids: List of paper identifiers
             depth: How many levels of citations to include
+            max_citations: Maximum number of citations per paper to include
+            direction: Citation direction ("both", "citing", or "cited")
             
         Returns:
             CitationGraph object
@@ -305,8 +344,8 @@ class DeepResearchOrchestrator:
         return await graph_builder.build_citation_graph(
             paper_ids, 
             depth=depth,
-            max_citations=20,  # TODO: Make configurable
-            direction="both"    # TODO: Make configurable
+            max_citations=max_citations,
+            direction=direction
         )
         
     async def store_to_drive(self, document: bytes, folder_id: Optional[str] = None, paper_id: Optional[str] = None) -> str:
@@ -334,7 +373,8 @@ class DeepResearchOrchestrator:
             try:
                 paper = await self.fetch_paper_metadata(paper_id)
             except Exception as e:
-                logger.warning(f"Error fetching paper metadata for Drive storage: {e}")
+                print(f"Error fetching paper metadata for summary: {e}")
+
                 
         # Store based on whether we have paper metadata
         if paper:
@@ -411,4 +451,161 @@ class DeepResearchOrchestrator:
         return {
             "query": query,
             "results": results
-        } 
+        }
+        
+    async def extract_relations(self, paper_id: str) -> List[Relation]:
+        """
+        Extract relationships between concepts in a paper.
+        
+        Args:
+            paper_id: Identifier for the paper
+            
+        Returns:
+            List of Relation objects
+        """
+        await self.initialize()
+        
+        # First, get the paper metadata
+        paper = await self.fetch_paper_metadata(paper_id)
+        
+        # Then, download the full text
+        try:
+            pdf_content = await self.download_fulltext(paper_id)
+            
+            # Extract text from PDF
+            fetcher = self._pipelines["fulltext_fetcher"]
+            document_text = await fetcher.extract_text_from_pdf(pdf_content)
+        except Exception as e:
+            print(f"Error downloading fulltext for relation extraction: {e}")
+            # Use abstract as fallback if full text isn't available
+            document_text = paper.abstract or ""
+            
+        # Use the relation extractor to find relationships
+        relation_extractor = self._pipelines["relation_extractor"]
+        relations = await relation_extractor.extract_relations(paper, document_text)
+        
+        return relations
+        
+    async def summarize_section(self, document: Union[str, bytes], section_name: str, paper_id: Optional[str] = None) -> str:
+        """
+        Generate a focused summary of a specific section in a document.
+        
+        Args:
+            document: Text or PDF content of the document
+            section_name: Name of the section to summarize (e.g., "Introduction", "Methods")
+            paper_id: Optional paper ID for additional context
+            
+        Returns:
+            Focused summary of the specified section
+        """
+        await self.initialize()
+        
+        # Extract text if document is a PDF
+        if isinstance(document, bytes):
+            fetcher = self._pipelines["fulltext_fetcher"]
+            full_text = await fetcher.extract_text_from_pdf(document)
+        else:
+            full_text = document
+            
+        # Get paper metadata if available
+        paper = None
+        if paper_id:
+            try:
+                paper = await self.fetch_paper_metadata(paper_id)
+            except Exception as e:
+                print(f"Error fetching paper metadata for section summary: {e}")
+                
+        # Create minimal Paper object if metadata not available
+        if not paper:
+            paper = Paper(
+                paper_id=paper_id or "document:unknown",
+                title="Unknown Document",
+                authors=[],
+                source="unknown"
+            )
+        
+        # Extract section text using pattern matching
+        # Note: This is a simple approach. In a real implementation, you might want to use
+        # a more sophisticated method to identify section boundaries
+        section_pattern = rf"(?i)(?:^|\n)(?:#*\s*{section_name}|{section_name}\s*\n[-=]+)([^\n]+\n)*(.*?)(?=(?:\n\s*#|\n\s*[A-Z][A-Za-z\s]+\n[-=]+|\Z))"
+        section_match = re.search(section_pattern, full_text, re.DOTALL)
+        
+        if not section_match:
+            return f"Could not find section '{section_name}' in the document."
+        
+        section_text = section_match.group(2)
+        
+        # Use the summarizer to create a focused summary of this section
+        summarizer = self._pipelines["summarizer"]
+        return await summarizer.summarize_section(paper, section_name, section_text)
+        
+    async def compare_papers(self, paper_ids: List[str], abstracts_only: bool = False) -> PaperComparison:
+        """
+        Compare multiple papers to identify similarities and differences.
+        
+        Args:
+            paper_ids: List of paper identifiers to compare
+            abstracts_only: Whether to use only abstracts or full text
+            
+        Returns:
+            PaperComparison object with structured comparison results
+        """
+        await self.initialize()
+        
+        # Fetch metadata for all papers
+        papers = []
+        full_texts = []
+        
+        for paper_id in paper_ids:
+            try:
+                # Get paper metadata
+                paper = await self.fetch_paper_metadata(paper_id)
+                papers.append(paper)
+                
+                # Get full text if requested
+                if not abstracts_only:
+                    try:
+                        pdf_content = await self.download_fulltext(paper_id)
+                        fetcher = self._pipelines["fulltext_fetcher"]
+                        text = await fetcher.extract_text_from_pdf(pdf_content)
+                        full_texts.append(text)
+                    except Exception as e:
+                        print(f"Failed to get full text for paper {paper_id}: {e}")
+                        # Add abstract as fallback
+                        full_texts.append(paper.abstract or "")
+            except Exception as e:
+                print(f"Failed to fetch paper {paper_id}: {e}")
+                # Skip papers that can't be fetched
+        
+        if not papers:
+            raise ValueError("No valid papers found for comparison")
+        
+        # Use the paper comparator to generate comparison
+        comparator = self._pipelines["paper_comparator"]
+        return await comparator.compare_papers(papers, abstracts_only, None if abstracts_only else full_texts)
+        
+    async def analyze_publication_trends(self, query: str, max_papers: int = 100) -> PublicationTrend:
+        """
+        Analyze publication trends for a given query.
+        
+        Args:
+            query: Search query for papers
+            max_papers: Maximum number of papers to include in analysis
+            
+        Returns:
+            PublicationTrend object with trend analysis results
+        """
+        await self.initialize()
+        
+        # Search for papers
+        search_result = await self.search_papers(
+            SearchQuery(
+                query=query, 
+                max_results=max_papers,
+                sources=["arxiv", "pubmed", "semanticscholar"]
+            )
+        )
+        
+        # Use the trend analyzer to analyze the papers
+        trend_analyzer = self._pipelines["trend_analyzer"]
+        return await trend_analyzer.analyze_trends(search_result.papers) 

@@ -16,13 +16,10 @@ from .models import SearchQuery, Paper, PaperSummary
 
 logger = logging.getLogger(__name__)
 
-# Store notes as a simple key-value dict to demonstrate state management
 notes: dict[str, str] = {}
 
-# Create the MCP server
 server = Server("deepresearch")
 
-# Create the orchestrator
 orchestrator = DeepResearchOrchestrator()
 
 # Helper function to get the orchestrator
@@ -104,7 +101,9 @@ async def handle_list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {
                     "paper_ids": {"type": "array", "items": {"type": "string"}, "description": "List of paper identifiers"},
-                    "depth": {"type": "integer", "description": "Depth of citation graph (1 = direct citations only, default: 1)"}
+                    "depth": {"type": "integer", "description": "Depth of citation graph (1 = direct citations only, default: 1)"},
+                    "max_citations": {"type": "integer", "description": "Maximum number of citations to return (default: 20)"},
+                    "direction": {"type": "string", "enum": ["both", "citing", "cited"], "description": "Direction of citation relationships (default: both)"}
                 },
                 "required": ["paper_ids"]
             },
@@ -158,6 +157,55 @@ async def handle_list_tools() -> list[types.Tool]:
                     "save_directory": {"type": "string", "description": "Directory to save the PDF"}
                 },
                 "required": ["paper_id"]
+            },
+        ),
+        types.Tool(
+            name="extract_relations",
+            description="Extract relationships between concepts in a scholarly paper (e.g., 'X causes Y' or 'Algorithm A outperforms B').",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "paper_id": {"type": "string", "description": "Paper identifier"}
+                },
+                "required": ["paper_id"]
+            },
+        ),
+        types.Tool(
+            name="summarize_section",
+            description="Generate a focused summary of a specific section in a scholarly paper.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document": {"type": "string", "description": "Document content (text or base64-encoded PDF)"},
+                    "content_type": {"type": "string", "enum": ["text", "pdf"], "description": "Type of content provided (default: text)"},
+                    "section_name": {"type": "string", "description": "Name of the section to summarize (e.g., Introduction, Methods, Results, Discussion)"},
+                    "paper_id": {"type": "string", "description": "Optional paper identifier for additional context"}
+                },
+                "required": ["document", "section_name"]
+            },
+        ),
+        types.Tool(
+            name="compare_papers",
+            description="Compare multiple scholarly papers to highlight similarities and differences in methods, results, and limitations.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "paper_ids": {"type": "array", "items": {"type": "string"}, "description": "List of paper identifiers to compare"},
+                    "abstracts_only": {"type": "boolean", "description": "Whether to use only abstracts (faster) or full text (more detailed) (default: false)"}
+                },
+                "required": ["paper_ids"]
+            },
+        ),
+        types.Tool(
+            name="analyze_trends",
+            description="Analyze publication trends over time, identify emerging topics, and plot term frequencies for a research area.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query to find papers for trend analysis"},
+                    "max_papers": {"type": "integer", "description": "Maximum number of papers to analyze (default: 100)"}
+                },
+                "required": ["query"]
             },
         ),
     ]
@@ -324,8 +372,19 @@ async def handle_call_tool(
                 raise ValueError("paper_ids is required and must not be empty")
                 
             depth = arguments.get("depth", 1)
+            max_citations = arguments.get("max_citations", 20)
+            direction = arguments.get("direction", "both")
             
-            citation_graph = await orchestrator.get_citation_graph(paper_ids, depth)
+            # Validate direction
+            if direction not in ["both", "citing", "cited"]:
+                raise ValueError("direction must be one of: both, citing, cited")
+            
+            citation_graph = await orchestrator.get_citation_graph(
+                paper_ids, 
+                depth=depth,
+                max_citations=max_citations,
+                direction=direction
+            )
             
             # Convert to JSON-serializable format
             nodes_json = []
@@ -558,6 +617,120 @@ async def handle_call_tool(
                 types.TextContent(
                     type="text",
                     text=json.dumps(result, indent=2)
+                )
+            ]
+        
+        elif name == "extract_relations":
+            paper_id = arguments.get("paper_id")
+            if not paper_id:
+                raise ValueError("paper_id is required")
+                
+            relations = await orchestrator.extract_relations(paper_id)
+            
+            # Convert to JSON-serializable format
+            relations_json = []
+            for relation in relations:
+                relations_json.append({
+                    "source": relation.source,
+                    "relation": relation.relation,
+                    "target": relation.target,
+                    "section": relation.section,
+                    "evidence": relation.evidence
+                })
+                
+            return [
+                types.TextContent(
+                    type="text",
+                    text=json.dumps(relations_json, indent=2)
+                )
+            ]
+        
+        elif name == "summarize_section":
+            document = arguments.get("document")
+            if not document:
+                raise ValueError("document is required")
+                
+            section_name = arguments.get("section_name")
+            if not section_name:
+                raise ValueError("section_name is required")
+                
+            content_type = arguments.get("content_type", "text")
+            paper_id = arguments.get("paper_id")
+            
+            # Convert document to appropriate format
+            if content_type == "pdf":
+                try:
+                    document = base64.b64decode(document)
+                except Exception as e:
+                    raise ValueError(f"Invalid base64-encoded PDF: {str(e)}")
+                    
+            # Generate the section summary
+            section_summary = await orchestrator.summarize_section(document, section_name, paper_id)
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "section": section_name,
+                        "summary": section_summary
+                    }, indent=2)
+                )
+            ]
+        
+        elif name == "compare_papers":
+            paper_ids = arguments.get("paper_ids", [])
+            if not paper_ids:
+                raise ValueError("paper_ids is required and must contain at least two papers")
+                
+            if len(paper_ids) < 2:
+                raise ValueError("At least two paper_ids are required for comparison")
+                
+            abstracts_only = arguments.get("abstracts_only", False)
+            
+            # Generate the comparison
+            comparison = await orchestrator.compare_papers(paper_ids, abstracts_only)
+            
+            # Convert to JSON-serializable format
+            comparison_json = {
+                "paper_ids": comparison.paper_ids,
+                "research_questions": comparison.research_questions,
+                "methodologies": comparison.methodologies,
+                "findings": comparison.findings,
+                "limitations": comparison.limitations,
+                "future_directions": comparison.future_directions
+            }
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=json.dumps(comparison_json, indent=2)
+                )
+            ]
+        
+        elif name == "analyze_trends":
+            query = arguments.get("query")
+            if not query:
+                raise ValueError("query is required")
+                
+            max_papers = arguments.get("max_papers", 100)
+            
+            # Generate the trend analysis
+            trends = await orchestrator.analyze_publication_trends(query, max_papers)
+            
+            # Convert to JSON-serializable format
+            trends_json = {
+                "query": trends.query,
+                "year_counts": {str(year): count for year, count in trends.year_counts.items()},
+                "emerging_topics": trends.emerging_topics,
+                "frequent_authors": [{"name": name, "count": count} for name, count in trends.frequent_authors],
+                "term_frequencies": {term: count for term, count in list(trends.term_frequencies.items())[:30]},
+                "source_distribution": trends.source_distribution
+            }
+            
+            return [
+                types.TextContent(
+                    type="text",
+                    text=json.dumps(trends_json, indent=2)
                 )
             ]
         

@@ -1,1 +1,10 @@
-credentials/client_secret_395039126310-8ovj91u9ef31o0pehta2n957bjqtaimp.apps.googleusercontent.com.json
+client_secret_395039126310-8ovj91u9ef31o0pehta2n957bjqtaimp.apps.googleusercontent.com.json
+deepresearch_token.json
+src/deepresearch_token.json
+src/deepresearch/deepresearch_token.json
+src/deepresearch_credentials.json
+# Environment variables
+.env
+.env.*
+
+__pycache__/ 

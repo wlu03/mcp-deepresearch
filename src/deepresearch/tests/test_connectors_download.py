@@ -23,7 +23,7 @@ from deepresearch.models import SearchQuery, Paper
 DOWNLOAD_DIR = pathlib.Path("downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-async def test_arxiv(session):
+async def test_arxiv(session, custom_query=None):
     """Test ArXiv connector functionality and save PDFs"""
     print("\n=== Testing ArXiv Connector ===")
     
@@ -32,7 +32,9 @@ async def test_arxiv(session):
         
         # Test search
         print("\nTesting search...")
-        query = SearchQuery(query="transformer neural networks", max_results=5)
+        query_text = custom_query if custom_query else "transformer neural networks"
+        print(f"Using query: '{query_text}'")
+        query = SearchQuery(query=query_text, max_results=5)
         papers = await connector.search(query)
         print(f"Found {len(papers)} papers")
         if papers:
@@ -78,7 +80,7 @@ async def test_arxiv(session):
     except Exception as e:
         print(f"Error testing ArXiv connector: {e}")
 
-async def test_pubmed(session):
+async def test_pubmed(session, custom_query=None):
     """Test PubMed connector functionality and save PDFs"""
     print("\n=== Testing PubMed Connector ===")
     
@@ -87,7 +89,9 @@ async def test_pubmed(session):
         
         # Test search
         print("\nTesting search...")
-        query = SearchQuery(query="CRISPR gene editing", max_results=5)
+        query_text = custom_query if custom_query else "CRISPR gene editing"
+        print(f"Using query: '{query_text}'")
+        query = SearchQuery(query=query_text, max_results=5)
         papers = await connector.search(query)
         print(f"Found {len(papers)} papers")
         if papers:
@@ -368,10 +372,10 @@ async def main():
     
     async with aiohttp.ClientSession() as session:
         if args.connector in ['arxiv', 'all']:
-            await test_arxiv(session)
+            await test_arxiv(session, args.query)
             
         if args.connector in ['pubmed', 'all']:
-            await test_pubmed(session)
+            await test_pubmed(session, args.query)
             
         if args.connector in ['semanticscholar', 'all']:
             await test_semantic_scholar(session)

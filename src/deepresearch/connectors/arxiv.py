@@ -44,7 +44,7 @@ class ArXivConnector(BaseConnector):
                 journal="arXiv",
                 doi=None,  # arXiv entries don't have DOIs by default
                 source="arxiv",
-                citations_count=None,  # Not provided by arXiv API
+                citations_count=None, # Not provided by arXiv API
                 raw_metadata={
                     "categories": [cat for cat in result.categories],
                     "comment": result.comment,
